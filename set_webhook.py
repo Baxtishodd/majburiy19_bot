@@ -12,11 +12,12 @@ async def main():
     result = await bot.set_webhook(url=WEBHOOK_URL)
     info = await bot.get_webhook_info()
 
+    no_error = "yo'q"
     print(f"Webhook URL:           {WEBHOOK_URL}")
     print(f"set_webhook result:    {result}")
     print(f"Webhook info URL:      {info.url}")
     print(f"Pending updates:       {info.pending_update_count}")
-    print(f"Last error:            {info.last_error_message or 'yo\'q'}")
+    print(f"Last error:            {info.last_error_message or no_error}")
 
     await bot.session.close()
 
