@@ -1,9 +1,11 @@
 import re
 import asyncio
+from time import monotonic
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import get_pool
+from handlers.members import register_chat
 
 router = Router()
 
@@ -18,6 +20,8 @@ AD_PATTERNS = [
 AD_REGEX = re.compile("|".join(AD_PATTERNS), re.IGNORECASE)
 
 _bot_warning_ids: set[int] = set()
+_chat_sync_cache: dict[int, float] = {}
+CHAT_SYNC_TTL_SECONDS = 600
 
 
 def is_ad_message(message: Message) -> bool:
@@ -25,6 +29,24 @@ def is_ad_message(message: Message) -> bool:
         return True
     text = message.text or message.caption or ""
     return bool(AD_REGEX.search(text))
+
+
+async def sync_chat_if_needed(message: Message):
+    now = monotonic()
+    last_synced = _chat_sync_cache.get(message.chat.id, 0)
+    if now - last_synced < CHAT_SYNC_TTL_SECONDS:
+        return
+
+    _chat_sync_cache[message.chat.id] = now
+    try:
+        await register_chat(
+            chat_id=message.chat.id,
+            title=message.chat.title or str(message.chat.id),
+            chat_type=message.chat.type,
+            username=message.chat.username,
+        )
+    except Exception:
+        _chat_sync_cache.pop(message.chat.id, None)
 
 
 # ─── DB yordamchi funksiyalar ─────────────────────────────────────────────────
@@ -143,6 +165,8 @@ async def delete_left_message(message: Message):
 async def group_message_filter(message: Message):
     if not message.from_user:
         return
+
+    await sync_chat_if_needed(message)
 
     # Bot o'zi yuborgan xabarlarni o'tkazib yuborish
     if message.message_id in _bot_warning_ids:

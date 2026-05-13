@@ -23,6 +23,11 @@ async def get_or_create_user(user_id: int, username: str, full_name: str, referr
                         "UPDATE users SET referral_count = referral_count + 1 WHERE id = %s",
                         (referrer_id,)
                     )
+            else:
+                await cur.execute(
+                    "UPDATE users SET username = %s, full_name = %s WHERE id = %s",
+                    (username, full_name, user_id)
+                )
 
 
 async def register_chat(chat_id: int, title: str, chat_type: str, username: str = None):
@@ -74,6 +79,12 @@ async def on_new_member(event: ChatMemberUpdated):
     if new_user.is_bot:
         return
 
+    await register_chat(
+        chat_id=group_id,
+        title=event.chat.title or str(group_id),
+        chat_type=event.chat.type,
+        username=event.chat.username,
+    )
     await get_or_create_user(new_user.id, new_user.username or "", new_user.full_name)
 
     pool = await get_pool()

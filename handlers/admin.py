@@ -153,6 +153,43 @@ TARGET_LABELS = {
 SENT_PAGE_SIZE = 5
 
 
+async def _collect_audience_counts(bot, chats: list[tuple[int, str]]) -> tuple[int, int, int]:
+    if not chats:
+        return 0, 0, 0
+
+    semaphore = asyncio.Semaphore(10)
+
+    async def fetch_count(chat_id: int, chat_type: str) -> tuple[str, int]:
+        async with semaphore:
+            try:
+                count = await asyncio.wait_for(bot.get_chat_member_count(chat_id), timeout=4)
+            except Exception:
+                count = 0
+        return chat_type, count
+
+    results = await asyncio.gather(
+        *(fetch_count(chat_id, chat_type) for chat_id, chat_type in chats),
+        return_exceptions=True,
+    )
+
+    total_members = 0
+    group_members = 0
+    channel_members = 0
+
+    for item in results:
+        if isinstance(item, Exception):
+            continue
+
+        chat_type, count = item
+        total_members += count
+        if chat_type in ("group", "supergroup"):
+            group_members += count
+        elif chat_type == "channel":
+            channel_members += count
+
+    return total_members, group_members, channel_members
+
+
 # ─── /admin ───────────────────────────────────────────────────────────────────
 
 @router.message(Command("admin"))
@@ -189,44 +226,41 @@ async def cb_stats(call: CallbackQuery):
 
     await call.message.edit_text("⏳ Statistika yuklanmoqda...", parse_mode="HTML")
 
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT COUNT(*) FROM bot_chats WHERE chat_type IN ('group','supergroup')")
-            groups_count = (await cur.fetchone())[0]
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT COUNT(*) FROM bot_chats WHERE chat_type IN ('group','supergroup')")
+                groups_count = (await cur.fetchone())[0]
 
-            await cur.execute("SELECT COUNT(*) FROM bot_chats WHERE chat_type = 'channel'")
-            channels_count = (await cur.fetchone())[0]
+                await cur.execute("SELECT COUNT(*) FROM bot_chats WHERE chat_type = 'channel'")
+                channels_count = (await cur.fetchone())[0]
 
-            await cur.execute("SELECT COUNT(*) FROM users")
-            users_count = (await cur.fetchone())[0]
+                await cur.execute("SELECT COUNT(*) FROM users")
+                users_count = (await cur.fetchone())[0]
 
-            await cur.execute("SELECT COUNT(*) FROM group_referrals")
-            refs = (await cur.fetchone())[0]
+                await cur.execute("SELECT COUNT(*) FROM group_referrals")
+                refs = (await cur.fetchone())[0]
 
-            await cur.execute("SELECT COUNT(*) FROM scheduled_posts WHERE sent = FALSE")
-            pending = (await cur.fetchone())[0]
+                await cur.execute("SELECT COUNT(*) FROM scheduled_posts WHERE sent = FALSE")
+                pending = (await cur.fetchone())[0]
 
-            await cur.execute("SELECT COUNT(*) FROM scheduled_posts WHERE sent = TRUE")
-            sent_total = (await cur.fetchone())[0]
+                await cur.execute("SELECT COUNT(*) FROM scheduled_posts WHERE sent = TRUE")
+                sent_total = (await cur.fetchone())[0]
 
-            await cur.execute("SELECT chat_id, chat_type FROM bot_chats")
-            chats = await cur.fetchall()
+                await cur.execute("SELECT chat_id, chat_type FROM bot_chats")
+                chats = await cur.fetchall()
+    except Exception as e:
+        await call.message.edit_text(
+            "❌ <b>Statistika olinmadi.</b>\n\n"
+            "Database ulanishida yoki so'rovda xatolik bo'ldi.\n"
+            f"<code>{str(e)[:250]}</code>",
+            parse_mode="HTML",
+            reply_markup=back_kb()
+        )
+        return
 
-    total_members = 0
-    group_members = 0
-    channel_members = 0
-
-    for chat_id, chat_type in chats:
-        try:
-            count = await call.bot.get_chat_member_count(chat_id)
-            total_members += count
-            if chat_type in ("group", "supergroup"):
-                group_members += count
-            elif chat_type == "channel":
-                channel_members += count
-        except Exception:
-            pass
+    total_members, group_members, channel_members = await _collect_audience_counts(call.bot, chats)
 
     def fmt(n):
         return f"{n:,}".replace(",", " ")

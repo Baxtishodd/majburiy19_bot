@@ -9,7 +9,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 
 from config import (BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH,
                     WEBHOOK_SECRET, WEBAPP_HOST, WEBAPP_PORT)
-from database import create_pool, init_db
+from database import create_pool, init_db, close_pool
 from handlers import start, stats, force, subscription, members, admin, antiad_cmd, check_sub
 from scheduler import run_scheduler
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 async def on_startup(bot: Bot):
-    await create_pool()
+    await create_pool(force=True)
     await init_db()
     await bot.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
     logger.info(f"✅ Webhook o'rnatildi: {WEBHOOK_URL}")
@@ -29,6 +29,7 @@ async def on_startup(bot: Bot):
 
 async def on_shutdown(bot: Bot):
     await bot.delete_webhook()
+    await close_pool()
     logger.info("🛑 Webhook o'chirildi")
 
 

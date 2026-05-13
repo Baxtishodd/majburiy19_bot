@@ -8,7 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Update
 
-from config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH
+from config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH, WEBHOOK_SECRET
 from database import create_pool, init_db
 from handlers import start, stats, force, subscription, members, admin, antiad_cmd, check_sub
 from scheduler import run_scheduler
@@ -45,10 +45,17 @@ dp.include_router(members.router)
 dp.include_router(check_sub.router)
 
 # ─── Startup ──────────────────────────────────────────────────────────────────
+_startup_done = False
+
+
 async def _startup():
-    await create_pool()
+    global _startup_done
+    if _startup_done:
+        return
+    await create_pool(force=True)
     await init_db()
-    await bot.set_webhook(WEBHOOK_URL)
+    await bot.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+    _startup_done = True
     logger.info(f"✅ Webhook: {WEBHOOK_URL}")
 
 loop.run_until_complete(_startup())
@@ -59,10 +66,15 @@ import threading
 def _run_scheduler():
     sch_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(sch_loop)
-    sch_loop.run_until_complete(run_scheduler(bot))
+    scheduler_bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+    sch_loop.run_until_complete(run_scheduler(scheduler_bot))
 
 scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True)
-scheduler_thread.start()
+if not scheduler_thread.is_alive():
+    scheduler_thread.start()
 
 # ─── Flask ────────────────────────────────────────────────────────────────────
 application = Flask(__name__)

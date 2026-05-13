@@ -1,27 +1,76 @@
+import logging
+import os
+
 import aiomysql
 from config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 
+logger = logging.getLogger(__name__)
 pool = None
+pool_pid = None
 
 
-async def create_pool():
-    global pool
+async def close_pool():
+    global pool, pool_pid
+    if pool is None:
+        return
+
+    try:
+        pool.close()
+        await pool.wait_closed()
+    except Exception as e:
+        logger.warning("DB pool yopishda xatolik: %s", e)
+    finally:
+        pool = None
+        pool_pid = None
+
+
+async def create_pool(force: bool = False):
+    global pool, pool_pid
+    current_pid = os.getpid()
+
+    if pool is not None and not force and not pool.closed and pool_pid == current_pid:
+        return pool
+
+    if pool is not None:
+        await close_pool()
+
     pool = await aiomysql.create_pool(
         host=DB_HOST,
         port=DB_PORT,
         user=DB_USER,
         password=DB_PASSWORD,
         db=DB_NAME,
+        minsize=1,
+        maxsize=10,
         autocommit=True,
         charset="utf8mb4",
+        connect_timeout=10,
+        pool_recycle=300,
     )
+    pool_pid = current_pid
+    logger.info("DB pool yaratildi (pid=%s)", current_pid)
+    return pool
 
 
 async def get_pool():
+    global pool
+    current_pid = os.getpid()
+
+    if pool is None or pool.closed or pool_pid != current_pid:
+        pool = await create_pool(force=True)
+
+    try:
+        async with pool.acquire() as conn:
+            await conn.ping(reconnect=True)
+    except Exception as e:
+        logger.warning("DB ulanishi uzilgan, pool qayta yaratilmoqda: %s", e)
+        pool = await create_pool(force=True)
+
     return pool
 
 
 async def init_db():
+    pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
 
