@@ -19,8 +19,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ─── Bot va Dispatcher ────────────────────────────────────────────────────────
+# ─── Event loop — Passenger uchun yangi loop ──────────────────────────────────
+try:
+    loop = asyncio.get_event_loop()
+    if loop.is_closed():
+        raise RuntimeError
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
+# ─── Bot va Dispatcher ────────────────────────────────────────────────────────
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -36,19 +44,27 @@ dp.include_router(antiad_cmd.router)
 dp.include_router(members.router)
 dp.include_router(check_sub.router)
 
-# ─── Startup: DB + Webhook + Scheduler ───────────────────────────────────────
-
+# ─── Startup ──────────────────────────────────────────────────────────────────
 async def _startup():
     await create_pool()
     await init_db()
     await bot.set_webhook(WEBHOOK_URL)
-    asyncio.create_task(run_scheduler(bot))
-    logger.info(f"✅ Webhook o'rnatildi: {WEBHOOK_URL}")
+    logger.info(f"✅ Webhook: {WEBHOOK_URL}")
 
-asyncio.get_event_loop().run_until_complete(_startup())
+loop.run_until_complete(_startup())
 
-# ─── Flask app ────────────────────────────────────────────────────────────────
+# Scheduler alohida threadda ishlatiladi — loop ni bloklamasin
+import threading
 
+def _run_scheduler():
+    sch_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(sch_loop)
+    sch_loop.run_until_complete(run_scheduler(bot))
+
+scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True)
+scheduler_thread.start()
+
+# ─── Flask ────────────────────────────────────────────────────────────────────
 application = Flask(__name__)
 
 
@@ -60,8 +76,9 @@ def healthcheck():
 @application.post(WEBHOOK_PATH)
 def telegram_webhook():
     data = request.get_json(silent=True) or {}
-    update = Update(**data)
-    asyncio.get_event_loop().run_until_complete(
-        dp.feed_update(bot=bot, update=update)
-    )
+    try:
+        update = Update(**data)
+        loop.run_until_complete(dp.feed_update(bot=bot, update=update))
+    except Exception as e:
+        logger.error(f"Update xatosi: {e}")
     return jsonify({"ok": True})
