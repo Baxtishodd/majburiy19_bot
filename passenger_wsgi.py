@@ -1,3 +1,6 @@
+"""
+Ahost cPanel Passenger WSGI entry point.
+"""
 import asyncio
 import logging
 from aiohttp import web
@@ -17,30 +20,17 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
 
 
-async def on_startup(bot: Bot):
-    await create_pool()
-    await init_db()
-    await bot.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
-    logger.info(f"✅ Webhook o'rnatildi: {WEBHOOK_URL}")
+def create_app():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-
-async def on_shutdown(bot: Bot):
-    await bot.delete_webhook()
-    logger.info("🛑 Webhook o'chirildi")
-
-
-def main():
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher(storage=MemoryStorage())
-
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
 
     dp.include_router(start.router)
     dp.include_router(admin.router)
@@ -51,24 +41,25 @@ def main():
     dp.include_router(members.router)
     dp.include_router(check_sub.router)
 
-    app = web.Application()
-
-    async def start_scheduler(app):
+    async def startup():
+        await create_pool()
+        await init_db()
+        await bot.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
         asyncio.create_task(run_scheduler(bot))
 
-    app.on_startup.append(start_scheduler)
+    loop.run_until_complete(startup())
+
+    aio_app = web.Application()
 
     SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
         secret_token=WEBHOOK_SECRET
-    ).register(app, path=WEBHOOK_PATH)
+    ).register(aio_app, path=WEBHOOK_PATH)
 
-    setup_application(app, dp, bot=bot)
+    setup_application(aio_app, dp, bot=bot)
 
-    logger.info(f"🚀 Bot ishga tushdi | {WEBAPP_HOST}:{WEBAPP_PORT}")
-    web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT)
+    return aio_app
 
 
-if __name__ == "__main__":
-    main()
+application = create_app()
