@@ -1171,7 +1171,10 @@ async def cb_excel_export(call: CallbackQuery):
         file_bytes = _wb_to_bytes(wb)
         excel_file = BufferedInputFile(file_bytes, filename=filename)
 
-        await call.message.delete()
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
         await call.bot.send_document(
             call.from_user.id,
             document=excel_file,
